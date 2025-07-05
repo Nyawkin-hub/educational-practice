@@ -20,22 +20,22 @@ with open("./companies.txt", "r") as f:
 output_dir = pathlib.Path(f"./src/data/{board}") 
 output_dir.mkdir(parents=True, exist_ok=True)
 
-# # сессия для реквестов на moex
-# with requests.Session() as session:
-#     for company in tqdm(companies):
-#         try: # на случай ошибки
-#             data = get_board_history(session, 
-#                                      company, 
-#                                      board=board, 
-#                                      start=start, 
-#                                      end=end)
-#             if not data:
-#                 print(f"[!] Нет данных: {company}")                                              # TODO логи
-#                 continue
-#             df = pd.DataFrame(data)[['TRADEDATE', 'CLOSE']] # что будет в csv файлах
-#             df.to_csv(output_dir / f"{company}.csv", index=False)
-#         except Exception as e:
-#             print(f"[ERROR] {company}: {e}")                                                     # TODO логи
+# сессия для реквестов на moex
+with requests.Session() as session:
+    for company in tqdm(companies):
+        try: # на случай ошибки
+            data = get_board_history(session, 
+                                     company, 
+                                     board=board, 
+                                     start=start, 
+                                     end=end)
+            if not data:
+                print(f"[!] Нет данных: {company}")                                              # TODO логи
+                continue
+            df = pd.DataFrame(data)[['TRADEDATE', 'CLOSE']] # что будет в csv файлах
+            df.to_csv(output_dir / f"{company}.csv", index=False)
+        except Exception as e:
+            print(f"[ERROR] {company}: {e}")                                                     # TODO логи
 
 # merge + rename
 master_df = pd.DataFrame()
