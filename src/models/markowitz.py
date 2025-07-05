@@ -23,8 +23,8 @@ def portfolio_return(weights):
 # оптимизация портфеля
 def optimize_portfolio(target_return):
     constraints = (
-        {"type": "eq", "fun": lambda x: np.sum(x) - 1},
-        {"type": "eq", "fun": lambda x: portfolio_return(x) - target_return},
+        {"type": "eq", "fun": lambda x: np.sum(x) - 1},     # сумма весов = 1
+        {"type": "eq", "fun": lambda x: portfolio_return(x) - target_return}, # заданная доходность
     )
     bounds = [(0, 1) for _ in companies]
     init_weights = np.ones(len(companies)) / len(companies)
@@ -38,7 +38,8 @@ def optimize_portfolio(target_return):
     )
     return result.x
 
-target_returns = np.linspace(expected_returns.min(), expected_returns.max(), 250)
+# target_returns = np.linspace(expected_returns.min(), expected_returns.max(), 150) # с отрицательным доходом
+target_returns = np.linspace(0, expected_returns.max(), 150) # без отрицательного
 
 # расчет портфелей
 portfolios = []
@@ -55,17 +56,31 @@ results = pd.DataFrame([{
     **{ticker: weight for ticker, weight in zip(companies, p["weights"])}
 } for p in portfolios])
 
+# портфель с минимальным риском
+min_risk_value = results["risk"].min()
+min_risk_candidates = results[np.isclose(results["risk"], min_risk_value, atol=1e-6)]
+true_min_risk_portfolio = min_risk_candidates.loc[min_risk_candidates["return"].idxmax()]
+
 # график
 fig, ax = plt.subplots(figsize=(12, 8))
 scatter = ax.scatter(results["risk"], results["return"], c=results["return"], cmap="viridis", picker=True)
 plt.colorbar(scatter, label="Доходность")
 plt.xlabel("Риск (σ)")
 plt.ylabel("Доходность (E)")
-plt.title("Кликните на точку, чтобы увидеть состав портфеля")
+plt.title("Зависимость минимального риска от ожидаемой эффективности портфеля")
 plt.grid(True)
 
-# Добавление курсора для удобства
+# курсор (красный)
 cursor = Cursor(ax, useblit=True, color='red', linewidth=1)
+
+ax.scatter(
+    true_min_risk_portfolio["risk"],
+    true_min_risk_portfolio["return"],
+    color='red',
+    s=100,
+    label='Мин. риск (опт.)'
+)
+ax.legend()
 
 # клик
 def on_pick(event):
@@ -83,7 +98,7 @@ def on_pick(event):
     plt.pie(weights, labels=weights.index, autopct='%1.1f%%')
     plt.title("Состав портфеля")
     
-    # Текстовая информация
+    # текст
     plt.subplot(1, 2, 2)
     info_text = "\n".join([f"{ticker}: {weight:.1%}" 
                           for ticker, weight in weights.items()])
@@ -93,10 +108,9 @@ def on_pick(event):
     plt.tight_layout()
     plt.show()
 
-# Подключение обработчика событий
+# подключение обработчика событий
 fig.canvas.mpl_connect('pick_event', on_pick)
 
 plt.show()
 
-# Сохранение результатов
 results.to_csv('portfolio_results.csv', index=False)
