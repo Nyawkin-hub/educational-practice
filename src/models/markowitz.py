@@ -39,7 +39,7 @@ def optimize_portfolio(target_return):
     return result.x
 
 # target_returns = np.linspace(expected_returns.min(), expected_returns.max(), 150) # с отрицательным доходом
-target_returns = np.linspace(0, expected_returns.max(), 150) # без отрицательного
+target_returns = np.linspace(0, expected_returns.max(), 100) # без отрицательного
 
 # расчет портфелей
 portfolios = []
@@ -67,7 +67,7 @@ scatter = ax.scatter(results["risk"], results["return"], c=results["return"], cm
 plt.colorbar(scatter, label="Доходность")
 plt.xlabel("Риск (σ)")
 plt.ylabel("Доходность (E)")
-plt.title("Зависимость минимального риска от ожидаемой эффективности портфеля")
+plt.title("")
 plt.grid(True)
 
 # курсор (красный)
