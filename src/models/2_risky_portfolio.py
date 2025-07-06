@@ -2,145 +2,107 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
-from matplotlib.widgets import Cursor
+from itertools import combinations
 
 # Загрузка данных
 data = pd.read_csv('portfolio_prices.csv', index_col=0)
-
 companies = data.columns.tolist()
-returns = data.pct_change().dropna()  # доходности в день
+
+returns = data.pct_change().dropna()
 expected_returns = returns.mean()
 cov_matrix = returns.cov()
 
-# Ищем безрисковый актив по волатильности < 1e-6
-riskless_threshold = 1e-6
-vols = returns.std()
-riskless_assets = vols[vols < riskless_threshold]
+def portfolio_risk(weights, cov):
+    return np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
 
-if not riskless_assets.empty:
-    best_riskless_asset = riskless_assets.index[np.argmax(expected_returns[riskless_assets.index])]
-    r_f = expected_returns[best_riskless_asset]
-else:
-    r_f = 0.0001  # константа, если нет безрискового актива
+def portfolio_return(weights, returns_mean):
+    return np.dot(weights, returns_mean)
 
-# Добавим безрисковый актив в список активов
-companies_with_rf = companies + ['Riskless']
-
-# Добавим безрисковый актив в доходности и ковариации
-expected_returns_with_rf = pd.concat([expected_returns, pd.Series({'Riskless': r_f})])
-
-# Для ковариационной матрицы добавим нулевой риск для безрискового актива
-cov_matrix_with_rf = cov_matrix.copy()
-cov_matrix_with_rf['Riskless'] = 0
-cov_matrix_with_rf.loc['Riskless'] = 0
-
-# Пересчёт ковариационной матрицы как np.array для удобства
-cov_matrix_with_rf = cov_matrix_with_rf.loc[companies_with_rf, companies_with_rf]
-
-# Функции риска и доходности с учетом безрискового актива
-def portfolio_risk(weights):
-    return np.sqrt(np.dot(weights.T, np.dot(cov_matrix_with_rf.values, weights)))
-
-def portfolio_return(weights):
-    return np.dot(weights, expected_returns_with_rf.values)
-
-# Оптимизация по эффективной границе
-def optimize_portfolio(target_return):
+def optimize_portfolio_pair(returns_mean, cov, target_return):
     constraints = (
         {"type": "eq", "fun": lambda x: np.sum(x) - 1},
-        {"type": "eq", "fun": lambda x: portfolio_return(x) - target_return},
+        {"type": "eq", "fun": lambda x: portfolio_return(x, returns_mean) - target_return},
     )
-    bounds = [(0, 1) for _ in companies_with_rf]
-    init_weights = np.ones(len(companies_with_rf)) / len(companies_with_rf)
-
+    bounds = [(0, 1), (0, 1)]
+    init_weights = np.array([0.5, 0.5])
+    
     result = minimize(
         portfolio_risk,
         init_weights,
+        args=(cov,),
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
     )
-    return result.x if result.success else None
+    if result.success:
+        return result.x
+    else:
+        return None
 
-# Целевые доходности
-target_returns = np.linspace(r_f, expected_returns.max(), 150)
+all_results = []
 
-portfolios = []
-for ret in target_returns:
-    weights = optimize_portfolio(ret)
-    if weights is not None:
-        port_ret = portfolio_return(weights)
-        port_risk = portfolio_risk(weights)
-        portfolios.append({"weights": weights, "return": port_ret, "risk": port_risk})
+# Перебор всех пар активов
+for asset1, asset2 in combinations(companies, 2):
+    pair_returns = returns[[asset1, asset2]]
+    pair_expected_returns = pair_returns.mean()
+    pair_cov = pair_returns.cov()
+    
+    # Диапазон целевых доходностей между минимальной и максимальной доходностью пары
+    target_returns = np.linspace(pair_expected_returns.min(), pair_expected_returns.max(), 50)
+    
+    pair_portfolios = []
+    for target in target_returns:
+        weights = optimize_portfolio_pair(pair_expected_returns.values, pair_cov.values, target)
+        if weights is not None:
+            ret = portfolio_return(weights, pair_expected_returns.values)
+            risk = portfolio_risk(weights, pair_cov.values)
+            pair_portfolios.append({
+                "assets": (asset1, asset2),
+                "weights": weights,
+                "return": ret,
+                "risk": risk
+            })
+    
+    all_results.extend(pair_portfolios)
 
-results = pd.DataFrame([{
-    "return": p["return"],
-    "risk": p["risk"],
-    **{ticker: weight for ticker, weight in zip(companies_with_rf, p["weights"])}
-} for p in portfolios])
+# Конвертируем в DataFrame для удобства анализа
+df_results = pd.DataFrame(all_results)
 
-# Тангенциальный портфель с максимальным коэффициентом Шарпа
-def neg_sharpe(weights):
-    ret = portfolio_return(weights)
-    risk = portfolio_risk(weights)
-    if risk == 0:
-        return 1e6
-    return -(ret - r_f) / risk
-
-constraints = {"type": "eq", "fun": lambda x: np.sum(x) - 1}
-bounds = [(0, 1) for _ in companies_with_rf]
-init_weights = np.ones(len(companies_with_rf)) / len(companies_with_rf)
-
-result = minimize(neg_sharpe, init_weights, method="SLSQP", bounds=bounds, constraints=constraints)
-tangential_weights = result.x
-tangential_return = portfolio_return(tangential_weights)
-tangential_risk = portfolio_risk(tangential_weights)
-max_sharpe = (tangential_return - r_f) / tangential_risk
-
-# Построение линии рынка капитала (CML)
-cml_risks = np.linspace(0, results["risk"].max() * 1.2, 200)
-cml_returns = r_f + max_sharpe * cml_risks
+# Ищем глобальный портфель с минимальным риском
+min_risk = df_results['risk'].min()
+min_risk_portfolios = df_results[np.isclose(df_results['risk'], min_risk, atol=1e-6)]
+optimal_portfolio = min_risk_portfolios.loc[min_risk_portfolios['return'].idxmax()]
 
 # Визуализация
-fig, ax = plt.subplots(figsize=(12, 8))
-scatter = ax.scatter(results["risk"], results["return"], c=results["return"], cmap="viridis", picker=True)
-plt.colorbar(scatter, label="Доходность")
-plt.xlabel("Риск (σ)")
-plt.ylabel("Доходность (E)")
-plt.title("Эффективная граница и линия рынка капитала (CML)")
+plt.figure(figsize=(14, 9))
+
+# Рисуем все линии эффективных границ по парам
+for (asset1, asset2), group in df_results.groupby('assets'):
+    plt.plot(group['risk'], group['return'], label=f'{asset1} & {asset2}', alpha=0.3)
+    
+    # Находим минимальный риск для этой пары
+    min_risk_in_pair = group['risk'].min()
+    min_risk_portfolios_in_pair = group[np.isclose(group['risk'], min_risk_in_pair, atol=1e-6)]
+    
+    # Отмечаем красными точками минимальные риски в паре
+    plt.scatter(min_risk_portfolios_in_pair['risk'], min_risk_portfolios_in_pair['return'], color='red', s=80)
+
+# Отмечаем глобальный минимальный риск крупной красной точкой с подписью
+plt.scatter(optimal_portfolio['risk'], optimal_portfolio['return'], color='darkred', s=150, label='Мин. риск (оптимальный)')
+
+plt.xlabel('Риск (σ)')
+plt.ylabel('Доходность (E)')
+plt.title('Эффективные границы для всех пар активов')
 plt.grid(True)
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
 
-cursor = Cursor(ax, useblit=True, color='red', linewidth=1)
+# Подпись к глобальному оптимальному портфелю
+w1, w2 = optimal_portfolio['weights']
+a1, a2 = optimal_portfolio['assets']
+plt.text(optimal_portfolio['risk'], optimal_portfolio['return'],
+         f'\n{a1}: {w1:.1%}\n{a2}: {w2:.1%}',
+         fontsize=10, color='darkred',
+         verticalalignment='bottom', horizontalalignment='right')
 
-# Безрисковый актив
-ax.scatter(0, r_f, color='green', s=100, label='Безрисковый актив')
-
-# Тангенциальный портфель
-ax.scatter(tangential_risk, tangential_return, color='red', s=150, label='Тангенциальный портфель')
-
-# Линия рынка капитала (CML)
-ax.plot(cml_risks, cml_returns, linestyle='--', color='orange', label='Линия рынка капитала (CML)')
-
-ax.legend()
-
-def on_pick(event):
-    ind = event.ind[0]
-    portfolio = results.iloc[ind]
-    plt.figure(figsize=(10, 5))
-    plt.suptitle(f"Портфель: Доходность = {portfolio['return']:.2%}, Риск = {portfolio['risk']:.2%}")
-    plt.subplot(1, 2, 1)
-    weights = portfolio[companies_with_rf]
-    weights = weights[weights > 0.001]
-    plt.pie(weights, labels=weights.index, autopct='%1.1f%%')
-    plt.title("Состав портфеля")
-    plt.subplot(1, 2, 2)
-    info_text = "\n".join([f"{ticker}: {weight:.1%}" for ticker, weight in weights.items()])
-    plt.text(0.1, 0.5, info_text, fontsize=10)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-
-fig.canvas.mpl_connect('pick_event', on_pick)
+plt.tight_layout()
 plt.show()
-
-results.to_csv('portfolio_results_with_rf.csv', index=False)
